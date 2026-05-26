@@ -1,6 +1,6 @@
-# Status Vault
+# Statusly
 
-Android MVP for saving viewed WhatsApp statuses.
+Android app for scanning and saving viewed WhatsApp statuses.
 
 ## Current scope
 
@@ -10,6 +10,7 @@ Android MVP for saving viewed WhatsApp statuses.
 - Recursive scan for viewed status files
 - Save to gallery through `MediaStore`
 - Saved history with `Room`
+- Public privacy policy page under `docs/privacy.html`
 
 ## Important behavior
 
@@ -40,8 +41,12 @@ The scanner will recursively locate the real `.Statuses` folder from the granted
 5. Return to the app and let it auto-scan.
 6. Save a result and verify it appears in Gallery and `Saved`.
 
+## Privacy policy
+
+- Source text: `docs/privacy-policy-en.md`
+- Public page for GitHub Pages: `docs/privacy.html`
+
 ## Known limits
 
-- Thumbnail-rich grid UI is not finished yet.
 - Some devices and ROMs handle SAF differently.
 - Video detection still depends on whether WhatsApp has cached the file locally.
