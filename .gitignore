@@ -1,0 +1,13 @@
+.gradle/
+.kotlin/
+.idea/
+build/
+**/build/
+local.properties
+*.iml
+*.log
+hs_err_pid*
+replay_pid*
+captures/
+.DS_Store
+Thumbs.db
