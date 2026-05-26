@@ -1,0 +1,2 @@
+# Statusly
+status app
