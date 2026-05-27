@@ -14,8 +14,10 @@ import com.yourcompany.statusvault.domain.model.StatusItem
 import com.yourcompany.statusvault.domain.model.StatusScanDebug
 import com.yourcompany.statusvault.domain.repository.StatusRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 class StatusRepositoryImpl @Inject constructor(
@@ -51,25 +53,27 @@ class StatusRepositoryImpl @Inject constructor(
     }
 
     override suspend fun saveStatus(item: StatusItem): Boolean {
-        val savedUri = mediaStoreSaver.saveToGallery(
-            context = context,
-            sourceUri = item.sourceUri,
-            displayName = item.fileName,
-            mimeType = item.mimeType,
-        )
-        if (savedUri == null) return false
+        return withContext(Dispatchers.IO) {
+            val savedUri = mediaStoreSaver.saveToGallery(
+                context = context,
+                sourceUri = item.sourceUri,
+                displayName = item.fileName,
+                mimeType = item.mimeType,
+            )
+            if (savedUri == null) return@withContext false
 
-        savedItemDao.insert(
-            SavedItemEntity(
-                statusId = item.id,
-                sourceApp = item.sourceApp.name,
-                mediaType = item.mediaType.name,
-                savedUri = savedUri,
-                savedAt = System.currentTimeMillis(),
-                fileName = item.fileName,
-            ),
-        )
-        return true
+            savedItemDao.insert(
+                SavedItemEntity(
+                    statusId = item.id,
+                    sourceApp = item.sourceApp.name,
+                    mediaType = item.mediaType.name,
+                    savedUri = savedUri,
+                    savedAt = System.currentTimeMillis(),
+                    fileName = item.fileName,
+                ),
+            )
+            true
+        }
     }
 
     override suspend fun getSavedIds(): Set<String> {

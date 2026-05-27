@@ -7,12 +7,21 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Color as AndroidColor
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.graphics.ImageDecoder
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
 import android.util.Size
+import android.view.Gravity
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import android.widget.VideoView
 import androidx.activity.compose.BackHandler
@@ -54,6 +63,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.MoreHoriz
@@ -193,12 +203,6 @@ fun StatusListRoute(
         viewModel.loadStatuses(sourceApp = selectedSource)
     }
 
-    LaunchedEffect(viewModel) {
-        viewModel.events.collect { message ->
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-        }
-    }
-
     DisposableEffect(lifecycleOwner, selectedSource) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -294,7 +298,19 @@ fun StatusListRoute(
                     StatusResultGrid(
                         items = filteredItems,
                         message = uiState.message,
-                        onSave = viewModel::save,
+                        onSave = { item ->
+                            viewModel.save(item) { success ->
+                                if (success) {
+                                    showSuccessToast(context, "Saved successfully")
+                                } else {
+                                    Toast.makeText(
+                                        context,
+                                        "Unable to save this status",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            }
+                        },
                         onPreview = {
                             SelectedPreviewHolder.statusItem = it
                             onOpenPreview()
@@ -943,19 +959,30 @@ private fun StatusGridTile(
     onSave: () -> Unit,
     onPreview: () -> Unit,
 ) {
+    var aspectRatio by remember(item.id) { mutableFloatStateOf(0.72f) }
+
     Box(
         modifier = Modifier
             .shadow(10.dp, RoundedCornerShape(26.dp), ambientColor = Color.Black.copy(alpha = 0.05f), spotColor = Color.Black.copy(alpha = 0.05f))
             .clip(RoundedCornerShape(26.dp))
-            .background(SurfaceWhite)
-            .clickable(onClick = onPreview),
+            .background(SurfaceWhite),
     ) {
-        StatusThumbnail(
-            item = item,
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(0.72f),
-        )
+                .aspectRatio(aspectRatio)
+                .clickable(onClick = onPreview),
+        ) {
+            StatusThumbnail(
+                item = item,
+                onBitmapLoaded = { bitmap ->
+                    if (bitmap.height > 0) {
+                        aspectRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
 
         if (item.mediaType == MediaType.VIDEO) {
             Box(
@@ -1019,6 +1046,7 @@ private fun StatusGridTile(
 @Composable
 private fun StatusThumbnail(
     item: StatusItem,
+    onBitmapLoaded: (Bitmap) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -1026,6 +1054,7 @@ private fun StatusThumbnail(
 
     LaunchedEffect(item.id) {
         thumbnail = loadThumbnail(context, item)
+        thumbnail?.let(onBitmapLoaded)
     }
 
     Box(
@@ -1073,12 +1102,6 @@ fun PreviewRoute(
 
     BackHandler(onBack = onBack)
 
-    LaunchedEffect(viewModel) {
-        viewModel.events.collect { message ->
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-        }
-    }
-
     if (item == null) {
         LaunchedEffect(Unit) {
             onBack()
@@ -1091,8 +1114,18 @@ fun PreviewRoute(
         onBack = onBack,
         onShare = { shareStatus(context, item) },
         onSave = {
-            viewModel.save(item)
-            SelectedPreviewHolder.statusItem = item.copy(isSaved = true)
+            viewModel.save(item) { success ->
+                if (success) {
+                    SelectedPreviewHolder.statusItem = item.copy(isSaved = true)
+                    showSuccessToast(context, "Saved successfully")
+                } else {
+                    Toast.makeText(
+                        context,
+                        "Unable to save this status",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
         },
         onForward = { forwardStatusToWhatsApp(context, item) },
     )
@@ -1561,14 +1594,7 @@ private suspend fun loadThumbnail(
         if (item.mediaType == MediaType.VIDEO) {
             loadVideoFrame(context, uri, size)
         } else {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val source = ImageDecoder.createSource(context.contentResolver, uri)
-                ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
-                    decoder.setTargetSize(size.width, size.height)
-                }
-            } else {
-                context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
-            }
+            decodeSampledBitmap(context, uri, size)
         }
     }.getOrNull()
 }
@@ -1645,4 +1671,111 @@ private fun formatModifiedAt(timestamp: Long): String {
     if (timestamp <= 0L) return "Ready"
     val formatter = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
     return formatter.format(Date(timestamp))
+}
+
+private fun calculateSampleSize(
+    sourceWidth: Int,
+    sourceHeight: Int,
+    targetWidth: Int,
+    targetHeight: Int,
+): Int {
+    if (sourceWidth <= 0 || sourceHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) {
+        return 1
+    }
+
+    var sampleSize = 1
+    while (
+        sourceWidth / sampleSize > targetWidth * 2 ||
+        sourceHeight / sampleSize > targetHeight * 2
+    ) {
+        sampleSize *= 2
+    }
+    return sampleSize.coerceAtLeast(1)
+}
+
+private fun decodeSampledBitmap(
+    context: Context,
+    uri: Uri,
+    size: Size,
+): Bitmap? {
+    val bounds = BitmapFactory.Options().apply {
+        inJustDecodeBounds = true
+    }
+    context.contentResolver.openInputStream(uri)?.use { input ->
+        BitmapFactory.decodeStream(input, null, bounds)
+    }
+
+    val sampleSize = calculateSampleSize(
+        sourceWidth = bounds.outWidth,
+        sourceHeight = bounds.outHeight,
+        targetWidth = size.width,
+        targetHeight = size.height,
+    )
+
+    val decodeOptions = BitmapFactory.Options().apply {
+        inSampleSize = sampleSize
+    }
+    return context.contentResolver.openInputStream(uri)?.use { input ->
+        BitmapFactory.decodeStream(input, null, decodeOptions)
+    }
+}
+
+private fun showSuccessToast(
+    context: Context,
+    message: String,
+) {
+    val density = context.resources.displayMetrics.density
+    val horizontalPadding = (16 * density).toInt()
+    val verticalPadding = (12 * density).toInt()
+    val iconSize = (22 * density).toInt()
+    val iconContainerSize = (34 * density).toInt()
+
+    val container = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(horizontalPadding, verticalPadding, horizontalPadding, verticalPadding)
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 22 * density
+            setColor(AndroidColor.parseColor("#F3FBF5"))
+            setStroke((1 * density).toInt(), AndroidColor.parseColor("#D7EFE0"))
+        }
+    }
+
+    val iconContainer = FrameLayout(context).apply {
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(AndroidColor.parseColor("#25D366"))
+        }
+        layoutParams = LinearLayout.LayoutParams(iconContainerSize, iconContainerSize)
+    }
+
+    val icon = ImageView(context).apply {
+        setImageResource(android.R.drawable.checkbox_on_background)
+        setColorFilter(AndroidColor.WHITE)
+        layoutParams = FrameLayout.LayoutParams(iconSize, iconSize, Gravity.CENTER)
+    }
+    iconContainer.addView(icon)
+
+    val label = TextView(context).apply {
+        text = message
+        setTextColor(AndroidColor.parseColor("#122117"))
+        textSize = 15f
+        setTypeface(typeface, Typeface.BOLD)
+        setPadding((12 * density).toInt(), 0, 0, 0)
+    }
+
+    container.addView(iconContainer)
+    container.addView(
+        label,
+        LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ),
+    )
+
+    Toast(context).apply {
+        duration = Toast.LENGTH_SHORT
+        view = container
+    }.show()
 }

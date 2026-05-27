@@ -269,6 +269,8 @@ private fun SavedPill(
 private fun SavedGridTile(
     item: SavedItem,
 ) {
+    var aspectRatio by remember(item.id) { mutableStateOf(0.72f) }
+
     Box(
         modifier = Modifier
             .shadow(10.dp, RoundedCornerShape(26.dp), ambientColor = Color.Black.copy(alpha = 0.05f), spotColor = Color.Black.copy(alpha = 0.05f))
@@ -277,9 +279,14 @@ private fun SavedGridTile(
     ) {
         SavedThumbnail(
             item = item,
+            onBitmapLoaded = { bitmap ->
+                if (bitmap.height > 0) {
+                    aspectRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
+                }
+            },
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(0.72f),
+                .aspectRatio(aspectRatio),
         )
 
         if (item.mediaType == MediaType.VIDEO) {
@@ -324,6 +331,7 @@ private fun SavedGridTile(
 @Composable
 private fun SavedThumbnail(
     item: SavedItem,
+    onBitmapLoaded: (Bitmap) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -331,6 +339,7 @@ private fun SavedThumbnail(
 
     LaunchedEffect(item.id) {
         thumbnail = loadSavedThumbnail(context, item)
+        thumbnail?.let(onBitmapLoaded)
     }
 
     Box(
@@ -418,14 +427,7 @@ private suspend fun loadSavedThumbnail(
         if (item.mediaType == MediaType.VIDEO) {
             loadSavedVideoFrame(context, uri, size)
         } else {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val source = ImageDecoder.createSource(context.contentResolver, uri)
-                ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
-                    decoder.setTargetSize(size.width, size.height)
-                }
-            } else {
-                context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
-            }
+            decodeSavedSampledBitmap(context, uri, size)
         }
     }.getOrNull()
 }
@@ -454,5 +456,52 @@ private fun loadSavedVideoFrame(
             ?: retriever.getFrameAtTime()
     } finally {
         retriever.release()
+    }
+}
+
+private fun calculateSavedSampleSize(
+    sourceWidth: Int,
+    sourceHeight: Int,
+    targetWidth: Int,
+    targetHeight: Int,
+): Int {
+    if (sourceWidth <= 0 || sourceHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) {
+        return 1
+    }
+
+    var sampleSize = 1
+    while (
+        sourceWidth / sampleSize > targetWidth * 2 ||
+        sourceHeight / sampleSize > targetHeight * 2
+    ) {
+        sampleSize *= 2
+    }
+    return sampleSize.coerceAtLeast(1)
+}
+
+private fun decodeSavedSampledBitmap(
+    context: Context,
+    uri: Uri,
+    size: Size,
+): Bitmap? {
+    val bounds = BitmapFactory.Options().apply {
+        inJustDecodeBounds = true
+    }
+    context.contentResolver.openInputStream(uri)?.use { input ->
+        BitmapFactory.decodeStream(input, null, bounds)
+    }
+
+    val sampleSize = calculateSavedSampleSize(
+        sourceWidth = bounds.outWidth,
+        sourceHeight = bounds.outHeight,
+        targetWidth = size.width,
+        targetHeight = size.height,
+    )
+
+    val decodeOptions = BitmapFactory.Options().apply {
+        inSampleSize = sampleSize
+    }
+    return context.contentResolver.openInputStream(uri)?.use { input ->
+        BitmapFactory.decodeStream(input, null, decodeOptions)
     }
 }

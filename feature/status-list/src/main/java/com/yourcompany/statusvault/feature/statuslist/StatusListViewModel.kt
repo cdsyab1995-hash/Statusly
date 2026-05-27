@@ -13,12 +13,9 @@ import com.yourcompany.statusvault.domain.usecase.GetSavedStatusIdsUseCase
 import com.yourcompany.statusvault.domain.usecase.SaveStatusUseCase
 import com.yourcompany.statusvault.domain.usecase.ScanStatusesUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -42,8 +39,6 @@ class StatusListViewModel @Inject constructor(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(StatusListUiState())
     val uiState: StateFlow<StatusListUiState> = _uiState.asStateFlow()
-    private val _events = MutableSharedFlow<String>(extraBufferCapacity = 1)
-    val events: SharedFlow<String> = _events.asSharedFlow()
 
     fun loadStatuses(
         sourceApp: SourceApp = SelectedSourceHolder.sourceApp,
@@ -118,7 +113,10 @@ class StatusListViewModel @Inject constructor(
         }
     }
 
-    fun save(item: StatusItem) {
+    fun save(
+        item: StatusItem,
+        onComplete: (Boolean) -> Unit = {},
+    ) {
         viewModelScope.launch {
             runCatching {
                 saveStatusUseCase(item)
@@ -128,9 +126,9 @@ class StatusListViewModel @Inject constructor(
                         if (it.id == item.id && success) it.copy(isSaved = true) else it
                     },
                 )
-                _events.tryEmit(if (success) "Saved to gallery" else "Save failed")
+                onComplete(success)
             }.onFailure {
-                _events.tryEmit("Save failed")
+                onComplete(false)
             }
         }
     }
